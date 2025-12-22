@@ -809,6 +809,10 @@ with tab1:
                 st.success(f"✓ 完了（{success_count}件成功）")
             else:
                 st.error("分析に失敗しました。URLを確認してください。")
+                # 失敗した原因を詳細表示
+                for r in results:
+                    if not r.get('success') and r.get('error'):
+                        st.warning(f"エラー詳細: {r.get('error')}")
 
 
     
