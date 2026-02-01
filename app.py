@@ -344,7 +344,50 @@ def analyze_video_with_gemini(model, video_info: dict, transcript: str) -> dict:
     transcript_text = transcript if transcript and len(transcript.strip()) > 50 else None
     char_count = len(transcript) if transcript else 0
     
-    prompt = f"""YouTube動画を分析してください。前置きや挨拶は一切不要。直接内容のみ出力。
+    # ショート動画かどうかを判定（URLにshortsが含まれるか、字幕が短い）
+    is_shorts = 'shorts' in video_info.get('url', '') or (char_count > 0 and char_count < 500)
+    
+    if is_shorts:
+        # ショート動画用プロンプト
+        prompt = f"""YouTubeショート動画を分析してください。前置きは不要。直接内容のみ出力。
+
+【タイトル】{video_info['title']}
+【字幕テキスト】{transcript_text[:3000] if transcript_text else "なし（字幕なし）"}
+
+以下の形式で出力：
+
+## コンテンツ概要
+- 内容: 
+- ジャンル: 
+- ターゲット層: 
+
+## フック分析（冒頭3秒）
+- 冒頭のつかみ: 
+- スクロール停止の仕掛け: 
+
+## タイトル分析
+- キーワード: 
+- 文字数: {len(video_info['title'])}文字
+- 煽り要素: 
+
+## サムネイル/最初のフレーム分析
+※添付画像を分析
+- インパクト: 
+- テキスト: 
+- 配置: 
+
+## 構成分析（縦型ショート特有）
+- 展開速度: 
+- 視聴維持の工夫: 
+- CTA/誘導: 
+- バズ要素: 
+
+## 再現ポイント
+このショートを参考に作る場合のポイント
+"""
+    else:
+        # 通常動画用プロンプト
+        prompt = f"""YouTube動画を分析してください。前置きや挨拶は一切不要。直接内容のみ出力。
 
 【タイトル】{video_info['title']}
 【字幕テキスト】{transcript_text[:12000] if transcript_text else "なし"}
@@ -396,10 +439,11 @@ def analyze_video_with_gemini(model, video_info: dict, transcript: str) -> dict:
             'video_info': video_info,
             'has_transcript': transcript_text is not None,
             'transcript': transcript,
-            'char_count': char_count
+            'char_count': char_count,
+            'is_shorts': is_shorts
         }
     except Exception as e:
-        return {'success': False, 'error': str(e), 'video_info': video_info, 'has_transcript': False, 'transcript': None, 'char_count': 0}
+        return {'success': False, 'error': str(e), 'video_info': video_info, 'has_transcript': False, 'transcript': None, 'char_count': 0, 'is_shorts': is_shorts if 'is_shorts' in dir() else False}
 
 
 def extract_common_patterns(model, all_results: list) -> tuple:
