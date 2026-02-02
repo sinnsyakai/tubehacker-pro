@@ -8,6 +8,8 @@ from io import BytesIO
 import re
 import time
 import json
+import os
+import tempfile
 from typing import Optional, List
 import streamlit.components.v1 as components
 
@@ -419,6 +421,62 @@ def get_transcript(video_id: str) -> Optional[str]:
     except Exception:
         return None
 
+
+def transcribe_shorts_audio(model, video_id: str) -> Optional[str]:
+    """ショート動画の音声をダウンロードしてGeminiで文字起こし"""
+    try:
+        import yt_dlp
+        
+        # 一時ファイルを作成
+        with tempfile.TemporaryDirectory() as temp_dir:
+            audio_path = os.path.join(temp_dir, 'audio.mp3')
+            
+            # yt-dlpで音声をダウンロード
+            ydl_opts = {
+                'format': 'bestaudio[ext=m4a]/bestaudio/best',
+                'outtmpl': audio_path.replace('.mp3', '.%(ext)s'),
+                'quiet': True,
+                'no_warnings': True,
+                'extract_audio': True,
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '128',
+                }],
+            }
+            
+            url = f"https://www.youtube.com/shorts/{video_id}"
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+            
+            # ダウンロードされたファイルを探す
+            audio_file = None
+            for f in os.listdir(temp_dir):
+                if f.endswith(('.mp3', '.m4a', '.webm', '.ogg')):
+                    audio_file = os.path.join(temp_dir, f)
+                    break
+            
+            if not audio_file or not os.path.exists(audio_file):
+                return None
+            
+            # Geminiで音声を文字起こし
+            audio_data = genai.upload_file(audio_file)
+            
+            prompt = """この音声を日本語で文字起こししてください。
+話されている内容をそのまま書き起こしてください。
+前置きや説明は不要です。音声の内容のみ出力してください。"""
+            
+            response = model.generate_content([prompt, audio_data])
+            
+            # 一時ファイルを削除（ディレクトリごと自動削除される）
+            genai.delete_file(audio_data)
+            
+            return response.text.strip()
+            
+    except Exception as e:
+        print(f"音声文字起こしエラー: {e}")
+        return None
 
 def analyze_video_with_gemini(model, video_info: dict, transcript: str) -> dict:
     transcript_text = transcript if transcript and len(transcript.strip()) > 50 else None
@@ -913,6 +971,11 @@ with tab1:
                     
                     status.text(f"分析中 ({i+1}/{len(video_ids_to_analyze)}): 字幕取得...")
                     transcript = get_transcript(vdata['video_id'])
+                    
+                    # ショート動画で字幕がない場合、音声から文字起こしを試みる
+                    if is_shorts and not transcript and model:
+                        status.text(f"分析中 ({i+1}/{len(video_ids_to_analyze)}): 音声から文字起こし中...")
+                        transcript = transcribe_shorts_audio(model, vdata['video_id'])
                     
                     status.text(f"分析中 ({i+1}/{len(video_ids_to_analyze)}): AI分析中...")
                     result = analyze_video_with_gemini(model, video_info, transcript)
