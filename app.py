@@ -375,7 +375,9 @@ def get_video_info(video_id: str, is_shorts: bool = False) -> dict:
 def get_transcript(video_id: str) -> Optional[str]:
     try:
         ytt_api = YouTubeTranscriptApi()
-        for lang in ['ja', 'en']:
+        
+        # 方法1: 日本語・英語の字幕を直接試す
+        for lang in ['ja', 'en', 'ja-JP', 'en-US']:
             try:
                 transcript_data = ytt_api.fetch(video_id, languages=[lang])
                 full_text = ' '.join([entry.text for entry in transcript_data])
@@ -383,15 +385,36 @@ def get_transcript(video_id: str) -> Optional[str]:
                     return full_text
             except Exception:
                 pass
+        
+        # 方法2: 利用可能な字幕一覧から取得
         try:
             transcript_list = ytt_api.list(video_id)
+            
+            # まず手動字幕を優先
             for transcript in transcript_list:
-                transcript_data = transcript.fetch()
-                full_text = ' '.join([entry.text for entry in transcript_data])
-                if full_text.strip():
-                    return full_text
+                if not transcript.is_generated:
+                    try:
+                        transcript_data = transcript.fetch()
+                        full_text = ' '.join([entry.text for entry in transcript_data])
+                        if full_text.strip():
+                            return full_text
+                    except Exception:
+                        pass
+            
+            # 次に自動生成字幕を試す
+            for transcript in transcript_list:
+                if transcript.is_generated:
+                    try:
+                        transcript_data = transcript.fetch()
+                        full_text = ' '.join([entry.text for entry in transcript_data])
+                        if full_text.strip():
+                            return full_text
+                    except Exception:
+                        pass
+                        
         except Exception:
             pass
+        
         return None
     except Exception:
         return None
