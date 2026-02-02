@@ -556,6 +556,9 @@ def analyze_video_with_gemini(model, video_info: dict, transcript: str) -> dict:
 
 以下の形式で出力：
 
+## 文字起こし（{char_count}文字）
+{f"字幕テキストを整形して出力してください。誤字脱字のみ修正。" if transcript_text else "字幕テキストがないため、文字起こしはできません。"}
+
 ## コンテンツ概要
 - 内容: 
 - ジャンル: 
