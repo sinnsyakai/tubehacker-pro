@@ -290,16 +290,58 @@ def search_youtube_videos(query: str, max_videos: int = MAX_VIDEOS) -> List[dict
         return []
 
 
-def get_video_info(video_id: str) -> dict:
+def get_video_info(video_id: str, is_shorts: bool = False) -> dict:
     try:
-        url = f"https://www.youtube.com/watch?v={video_id}"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(url, headers=headers, timeout=10)
+        # ショートの場合は両方のURLを試す
+        if is_shorts:
+            url = f"https://www.youtube.com/shorts/{video_id}"
+        else:
+            url = f"https://www.youtube.com/watch?v={video_id}"
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'ja-JP,ja;q=0.9,en;q=0.8'
+        }
+        response = requests.get(url, headers=headers, timeout=15)
+        
+        # タイトル取得（複数の方法を試す）
+        title = None
         soup = BeautifulSoup(response.text, 'html.parser')
         
+        # 方法1: og:title
         title_tag = soup.find('meta', property='og:title')
-        title = title_tag['content'] if title_tag else "タイトル取得失敗"
+        if title_tag and title_tag.get('content'):
+            title = title_tag['content']
         
+        # 方法2: title タグ
+        if not title:
+            title_element = soup.find('title')
+            if title_element:
+                title = title_element.text.replace(' - YouTube', '').strip()
+        
+        # 方法3: JSON-LD から
+        if not title:
+            import json
+            for script in soup.find_all('script', type='application/ld+json'):
+                try:
+                    data = json.loads(script.string)
+                    if isinstance(data, dict) and data.get('name'):
+                        title = data['name']
+                        break
+                except:
+                    pass
+        
+        # 方法4: ytInitialPlayerResponse から
+        if not title:
+            import re
+            match = re.search(r'"title":"([^"]+)"', response.text)
+            if match:
+                title = match.group(1).encode().decode('unicode_escape')
+        
+        if not title:
+            title = "タイトル取得失敗"
+        
+        # サムネイル取得
         thumbnail_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
         thumb_response = requests.get(thumbnail_url, timeout=10)
         if thumb_response.status_code != 200:
@@ -310,9 +352,24 @@ def get_video_info(video_id: str) -> dict:
         if thumb_response.status_code == 200:
             thumbnail_image = Image.open(BytesIO(thumb_response.content))
         
-        return {'title': title, 'thumbnail_url': thumbnail_url, 'thumbnail_image': thumbnail_image, 'video_id': video_id, 'url': url}
+        return {
+            'title': title, 
+            'thumbnail_url': thumbnail_url, 
+            'thumbnail_image': thumbnail_image, 
+            'video_id': video_id, 
+            'url': url,
+            'is_shorts': is_shorts
+        }
     except Exception as e:
-        return {'title': "取得エラー", 'thumbnail_url': None, 'thumbnail_image': None, 'video_id': video_id, 'url': f"https://www.youtube.com/watch?v={video_id}", 'error': str(e)}
+        return {
+            'title': "取得エラー", 
+            'thumbnail_url': None, 
+            'thumbnail_image': None, 
+            'video_id': video_id, 
+            'url': f"https://www.youtube.com/watch?v={video_id}", 
+            'error': str(e),
+            'is_shorts': is_shorts
+        }
 
 
 def get_transcript(video_id: str) -> Optional[str]:
@@ -827,7 +884,9 @@ with tab1:
                     
                 try:
                     status.text(f"分析中 ({i+1}/{len(video_ids_to_analyze)}): 動画情報取得...")
-                    video_info = get_video_info(vdata['video_id'])
+                    # URLからショートかどうか判定
+                    is_shorts = 'shorts' in vdata.get('url', '')
+                    video_info = get_video_info(vdata['video_id'], is_shorts=is_shorts)
                     
                     status.text(f"分析中 ({i+1}/{len(video_ids_to_analyze)}): 字幕取得...")
                     transcript = get_transcript(vdata['video_id'])
