@@ -217,15 +217,27 @@ def extract_video_id(url: str) -> Optional[str]:
 def get_videos_from_channel(channel_url: str, max_videos: int = MAX_VIDEOS) -> List[dict]:
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept-Language': 'ja-JP,ja;q=0.9',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'ja-JP,ja;q=0.9,en;q=0.8',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         }
-        videos_url = channel_url.rstrip('/') + '/videos'
-        response = requests.get(videos_url, headers=headers, timeout=15)
         
+        # URLを正規化（/videosを追加）
+        base_url = channel_url.rstrip('/')
+        if not base_url.endswith('/videos'):
+            videos_url = base_url + '/videos'
+        else:
+            videos_url = base_url
+        
+        response = requests.get(videos_url, headers=headers, timeout=20)
+        
+        # ytInitialDataを抽出
         match = re.search(r'var ytInitialData = ({.*?});', response.text)
         if not match:
             match = re.search(r'ytInitialData\s*=\s*({.*?});', response.text)
+        if not match:
+            # 別のパターンも試す
+            match = re.search(r'window\["ytInitialData"\]\s*=\s*({.*?});', response.text)
         if not match:
             return []
         
@@ -233,15 +245,64 @@ def get_videos_from_channel(channel_url: str, max_videos: int = MAX_VIDEOS) -> L
         videos = []
         
         def find_videos(obj, depth=0):
-            if depth > 15 or len(videos) >= max_videos:
+            if depth > 20 or len(videos) >= max_videos:
                 return
             if isinstance(obj, dict):
-                if 'videoId' in obj and 'title' in obj:
-                    video_id = obj['videoId']
-                    title_obj = obj.get('title', {})
-                    title = title_obj.get('runs', [{}])[0].get('text', '') if isinstance(title_obj, dict) else str(title_obj)
+                # videoRenderer パターン（メイン）
+                if 'videoRenderer' in obj:
+                    renderer = obj['videoRenderer']
+                    video_id = renderer.get('videoId', '')
+                    title_obj = renderer.get('title', {})
+                    if isinstance(title_obj, dict):
+                        runs = title_obj.get('runs', [])
+                        title = runs[0].get('text', '') if runs else title_obj.get('simpleText', '')
+                    else:
+                        title = str(title_obj)
                     if video_id and title and not any(v['video_id'] == video_id for v in videos):
                         videos.append({'video_id': video_id, 'title': title, 'url': f'https://www.youtube.com/watch?v={video_id}'})
+                
+                # gridVideoRenderer パターン（グリッド表示）
+                elif 'gridVideoRenderer' in obj:
+                    renderer = obj['gridVideoRenderer']
+                    video_id = renderer.get('videoId', '')
+                    title_obj = renderer.get('title', {})
+                    if isinstance(title_obj, dict):
+                        runs = title_obj.get('runs', [])
+                        title = runs[0].get('text', '') if runs else title_obj.get('simpleText', '')
+                    else:
+                        title = str(title_obj)
+                    if video_id and title and not any(v['video_id'] == video_id for v in videos):
+                        videos.append({'video_id': video_id, 'title': title, 'url': f'https://www.youtube.com/watch?v={video_id}'})
+                
+                # richItemRenderer パターン（新しいUIスタイル）
+                elif 'richItemRenderer' in obj:
+                    content = obj['richItemRenderer'].get('content', {})
+                    if 'videoRenderer' in content:
+                        renderer = content['videoRenderer']
+                        video_id = renderer.get('videoId', '')
+                        title_obj = renderer.get('title', {})
+                        if isinstance(title_obj, dict):
+                            runs = title_obj.get('runs', [])
+                            title = runs[0].get('text', '') if runs else title_obj.get('simpleText', '')
+                        else:
+                            title = str(title_obj)
+                        if video_id and title and not any(v['video_id'] == video_id for v in videos):
+                            videos.append({'video_id': video_id, 'title': title, 'url': f'https://www.youtube.com/watch?v={video_id}'})
+                
+                # 直接videoIdとtitleがある場合
+                elif 'videoId' in obj:
+                    video_id = obj['videoId']
+                    title_obj = obj.get('title', {})
+                    if isinstance(title_obj, dict):
+                        runs = title_obj.get('runs', [])
+                        title = runs[0].get('text', '') if runs else title_obj.get('simpleText', '')
+                    elif isinstance(title_obj, str):
+                        title = title_obj
+                    else:
+                        title = ''
+                    if video_id and title and len(video_id) == 11 and not any(v['video_id'] == video_id for v in videos):
+                        videos.append({'video_id': video_id, 'title': title, 'url': f'https://www.youtube.com/watch?v={video_id}'})
+                
                 for value in obj.values():
                     find_videos(value, depth + 1)
             elif isinstance(obj, list):
@@ -250,7 +311,8 @@ def get_videos_from_channel(channel_url: str, max_videos: int = MAX_VIDEOS) -> L
         
         find_videos(data)
         return videos[:max_videos]
-    except Exception:
+    except Exception as e:
+        print(f"チャンネル動画取得エラー: {e}")
         return []
 
 
