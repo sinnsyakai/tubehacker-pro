@@ -625,23 +625,37 @@ def analyze_video_with_gemini(model, video_info: dict, transcript: str) -> dict:
 - ターゲット層: 
 """
     
-    try:
-        if video_info.get('thumbnail_image'):
-            response = model.generate_content([prompt, video_info['thumbnail_image']])
-        else:
-            response = model.generate_content(prompt)
-        
-        return {
-            'success': True,
-            'analysis': response.text,
-            'video_info': video_info,
-            'has_transcript': transcript_text is not None,
-            'transcript': transcript,
-            'char_count': char_count,
-            'is_shorts': is_shorts
-        }
-    except Exception as e:
-        return {'success': False, 'error': str(e), 'video_info': video_info, 'has_transcript': False, 'transcript': None, 'char_count': 0, 'is_shorts': is_shorts if 'is_shorts' in dir() else False}
+    # リトライロジック（レート制限対策）
+    max_retries = 3
+    retry_delay = 35  # 秒
+    
+    for attempt in range(max_retries):
+        try:
+            if video_info.get('thumbnail_image'):
+                response = model.generate_content([prompt, video_info['thumbnail_image']])
+            else:
+                response = model.generate_content(prompt)
+            
+            return {
+                'success': True,
+                'analysis': response.text,
+                'video_info': video_info,
+                'has_transcript': transcript_text is not None,
+                'transcript': transcript,
+                'char_count': char_count,
+                'is_shorts': is_shorts
+            }
+        except Exception as e:
+            error_str = str(e)
+            # レート制限エラーの場合はリトライ
+            if '429' in error_str or 'quota' in error_str.lower() or 'rate' in error_str.lower():
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay * (attempt + 1))  # 待機時間を増やしていく
+                    continue
+            # その他のエラーまたは最後のリトライ失敗
+            return {'success': False, 'error': error_str, 'video_info': video_info, 'has_transcript': False, 'transcript': None, 'char_count': 0, 'is_shorts': is_shorts if 'is_shorts' in dir() else False}
+    
+    return {'success': False, 'error': 'リトライ回数を超えました', 'video_info': video_info, 'has_transcript': False, 'transcript': None, 'char_count': 0, 'is_shorts': is_shorts}
 
 
 def extract_common_patterns(model, all_results: list) -> tuple:
